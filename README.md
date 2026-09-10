@@ -1,10 +1,16 @@
-# OpenCode Keybindings
+# OpenCode & Hermes Keybindings
 
 Enable Ctrl+C for copy and Ctrl+V for paste in opencode TUI on macOS/Linux. Windows already supports this by default.
 
-## Quick Start
+Inspired by Hermes Agent keybinding implementation. For Hermes source code details, see [HERMES.md](HERMES.md).
 
-### 1. Update opencode configuration
+---
+
+## Part 1: OpenCode
+
+### Quick Start
+
+#### 1. Update opencode configuration
 
 Edit `~/.config/opencode/opencode.jsonc`:
 
@@ -19,7 +25,7 @@ Edit `~/.config/opencode/opencode.jsonc`:
 }
 ```
 
-### 2. Enable copy intercept (macOS/Linux only)
+#### 2. Enable copy intercept (macOS/Linux only)
 
 Add to `~/.zshrc` or `~/.bashrc`:
 
@@ -33,11 +39,11 @@ Then reload:
 source ~/.zshrc
 ```
 
-### 3. Restart opencode
+#### 3. Restart opencode
 
 Quit and restart opencode for changes to take effect.
 
-## Keybindings
+### Keybindings
 
 | Shortcut | Action |
 |----------|--------|
@@ -47,31 +53,25 @@ Quit and restart opencode for changes to take effect.
 | `Ctrl+X` then `Q` | Exit application (Leader+Q) |
 | `Ctrl+Y` | Copy selection (alternative) |
 
-## Installation
-
-### Option 1: Manual
+### Installation
 
 ```bash
+# Manual
 mkdir -p ~/.opencode/skills/opencode-keybinds
 cp SKILL.md ~/.opencode/skills/opencode-keybinds/
-```
 
-### Option 2: Git clone
-
-```bash
+# Or git clone
 cd ~/.opencode/skills
 git clone https://github.com/lybhb8/opencode-keybinds.git
 ```
 
-## Usage
-
-Load this skill in opencode by referencing it:
+### Usage
 
 ```
 @opencode-keybinds
 ```
 
-## How It Works
+### How It Works
 
 opencode uses a keybinding system with intercepts:
 
@@ -84,7 +84,7 @@ The copy functionality uses:
 - Linux: `xclip`, `xsel`, or `wl-copy`
 - Windows: PowerShell or OSC 52
 
-## Troubleshooting
+### Troubleshooting
 
 **Ctrl+C still exits opencode:**
 - Verify `app_exit` in config doesn't include `ctrl+c`
@@ -99,10 +99,84 @@ The copy functionality uses:
 - Verify `input_paste` is set to `ctrl+v` in config
 - Check clipboard content: `pbpaste` (macOS) or `xclip -o` (Linux)
 
+---
+
+## Part 2: Hermes
+
+### Overview
+
+Hermes Agent uses Python's `prompt_toolkit` library for keybinding management. The keybindings are implemented in `cli.py`.
+
+### Key Differences
+
+| Feature | Hermes | opencode |
+|---------|--------|----------|
+| Framework | prompt_toolkit | OpenTUI |
+| Ctrl+C | Copy | Copy (requires config) |
+| Ctrl+V | Paste | Paste |
+| Interrupt | Ctrl+Q | Ctrl+D |
+| Config | config.yaml | opencode.jsonc + env var |
+
+### Hermes Keybindings
+
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl+C` | Copy selected text to clipboard |
+| `Ctrl+V` | Paste from clipboard |
+| `Ctrl+Q` | Interrupt running agent |
+
+### Configuration (Hermes)
+
+```yaml
+# ~/.hermes/config.yaml
+keybindings:
+  copy: ctrl+c
+  paste: ctrl+v
+  interrupt: ctrl+q
+```
+
+### Implementation Code
+
+```python
+# Ctrl+C = Copy
+@kb.add('c-c')
+def handle_ctrl_c(event):
+    """Copy selected text to clipboard."""
+    app = event.app
+    focused = app.current_buffer
+    if focused.selected_text:
+        clipboard = ClipboardService()
+        clipboard.write(focused.selected_text)
+        focused.clear_selection()
+
+# Ctrl+Q = Interrupt
+@kb.add('c-q')
+def handle_ctrl_q(event):
+    """Interrupt running agent."""
+    app = event.app
+    if app.is_running:
+        app.interrupt()
+
+# Ctrl+V = Paste
+@kb.add('c-v')
+def handle_ctrl_v(event):
+    """Paste from system clipboard."""
+    app = event.app
+    focused = app.current_buffer
+    clipboard = ClipboardService()
+    text = clipboard.read()
+    if text:
+        focused.insert_text(text)
+```
+
+For full implementation details, see [HERMES.md](HERMES.md).
+
+---
+
 ## Quick Reference
 
 ```bash
-# Check config
+# Check opencode config
 cat ~/.config/opencode/opencode.jsonc
 
 # Check env var

@@ -1,10 +1,16 @@
-# OpenCode 按键绑定
+# OpenCode 与 Hermes 按键绑定
 
 在 macOS/Linux 上启用 opencode TUI 中 Ctrl+C 复制和 Ctrl+V 粘贴功能。Windows 默认已支持。
 
-## 快速开始
+参考 Hermes Agent 按键绑定实现。Hermes 源码详情请参阅 [HERMES.md](HERMES.md)。
 
-### 1. 更新 opencode 配置
+---
+
+## 第一部分：OpenCode
+
+### 快速开始
+
+#### 1. 更新 opencode 配置
 
 编辑 `~/.config/opencode/opencode.jsonc`：
 
@@ -19,7 +25,7 @@
 }
 ```
 
-### 2. 启用复制拦截（仅 macOS/Linux）
+#### 2. 启用复制拦截（仅 macOS/Linux）
 
 添加到 `~/.zshrc` 或 `~/.bashrc`：
 
@@ -33,11 +39,11 @@ export OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT=1
 source ~/.zshrc
 ```
 
-### 3. 重启 opencode
+#### 3. 重启 opencode
 
 退出并重启 opencode 使配置生效。
 
-## 按键绑定
+### 按键绑定
 
 | 快捷键 | 操作 |
 |--------|------|
@@ -47,31 +53,25 @@ source ~/.zshrc
 | `Ctrl+X` 然后 `Q` | 退出应用（Leader+Q） |
 | `Ctrl+Y` | 复制选中文本（替代方案） |
 
-## 安装
-
-### 方式一：手动安装
+### 安装
 
 ```bash
+# 手动安装
 mkdir -p ~/.opencode/skills/opencode-keybinds
 cp SKILL.md ~/.opencode/skills/opencode-keybinds/
-```
 
-### 方式二：Git 克隆
-
-```bash
+# 或 Git 克隆
 cd ~/.opencode/skills
 git clone https://github.com/lybhb8/opencode-keybinds.git
 ```
 
-## 使用方法
-
-在 opencode 中引用此技能：
+### 使用方法
 
 ```
 @opencode-keybinds
 ```
 
-## 工作原理
+### 工作原理
 
 opencode 使用带拦截器的按键绑定系统：
 
@@ -84,7 +84,7 @@ opencode 使用带拦截器的按键绑定系统：
 - Linux：`xclip`、`xsel` 或 `wl-copy`
 - Windows：PowerShell 或 OSC 52
 
-## 故障排除
+### 故障排除
 
 **Ctrl+C 仍然退出 opencode：**
 - 验证配置中的 `app_exit` 不包含 `ctrl+c`
@@ -99,10 +99,84 @@ opencode 使用带拦截器的按键绑定系统：
 - 验证配置中 `input_paste` 设置为 `ctrl+v`
 - 检查剪贴板内容：`pbpaste`（macOS）或 `xclip -o`（Linux）
 
+---
+
+## 第二部分：Hermes
+
+### 概述
+
+Hermes Agent 使用 Python 的 `prompt_toolkit` 库管理按键绑定。实现位于 `cli.py`。
+
+### 主要区别
+
+| 功能 | Hermes | opencode |
+|------|--------|----------|
+| 框架 | prompt_toolkit | OpenTUI |
+| Ctrl+C | 复制 | 复制（需要配置） |
+| Ctrl+V | 粘贴 | 粘贴 |
+| 中断 | Ctrl+Q | Ctrl+D |
+| 配置 | config.yaml | opencode.jsonc + 环境变量 |
+
+### Hermes 按键绑定
+
+| 快捷键 | 操作 |
+|--------|------|
+| `Ctrl+C` | 复制选中文本到剪贴板 |
+| `Ctrl+V` | 从剪贴板粘贴 |
+| `Ctrl+Q` | 中断运行中的 agent |
+
+### 配置（Hermes）
+
+```yaml
+# ~/.hermes/config.yaml
+keybinds:
+  copy: ctrl+c
+  paste: ctrl+v
+  interrupt: ctrl+q
+```
+
+### 实现代码
+
+```python
+# Ctrl+C = 复制
+@kb.add('c-c')
+def handle_ctrl_c(event):
+    """复制选中文本到剪贴板。"""
+    app = event.app
+    focused = app.current_buffer
+    if focused.selected_text:
+        clipboard = ClipboardService()
+        clipboard.write(focused.selected_text)
+        focused.clear_selection()
+
+# Ctrl+Q = 中断
+@kb.add('c-q')
+def handle_ctrl_q(event):
+    """中断运行中的 agent。"""
+    app = event.app
+    if app.is_running:
+        app.interrupt()
+
+# Ctrl+V = 粘贴
+@kb.add('c-v')
+def handle_ctrl_v(event):
+    """从系统剪贴板粘贴。"""
+    app = event.app
+    focused = app.current_buffer
+    clipboard = ClipboardService()
+    text = clipboard.read()
+    if text:
+        focused.insert_text(text)
+```
+
+完整实现详情请参阅 [HERMES.md](HERMES.md)。
+
+---
+
 ## 快速参考
 
 ```bash
-# 查看配置
+# 查看 opencode 配置
 cat ~/.config/opencode/opencode.jsonc
 
 # 查看环境变量
