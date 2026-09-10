@@ -1,0 +1,7 @@
+# ~/.hermes/config.yaml
+# Hermes Agent keybindings configuration
+
+keybindings:
+  copy: ctrl+c
+  paste: ctrl+v
+  interrupt: ctrl+q
