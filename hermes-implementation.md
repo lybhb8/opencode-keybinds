@@ -1,338 +1,311 @@
-# Hermes 按键绑定实现 / Hermes Keybindings Implementation
+# OpenCode Keybindings Implementation / OpenCode 按键绑定实现
 
-本文档包含 Hermes 中 Ctrl+C 复制和 Ctrl+V 粘贴功能的实现代码。
+This document contains the implementation code for Ctrl+C copy and Ctrl+V paste functionality in opencode, similar to how Hermes implements it.
 
-This document contains the implementation code for Ctrl+C copy and Ctrl+V paste functionality in Hermes.
+本文档包含 opencode 中 Ctrl+C 复制和 Ctrl+V 粘贴功能的实现代码，类似于 Hermes 的实现方式。
 
 ## Overview / 概述
 
-Hermes 使用 `prompt_toolkit` 框架实现按键绑定系统，通过 `KeyBindings` 类注册自定义按键处理器。
+opencode uses a keybinding system with intercepts to handle keyboard shortcuts. The copy functionality is implemented through:
 
-Hermes uses the `prompt_toolkit` framework to implement the keybinding system, registering custom key handlers through the `KeyBindings` class.
+opencode 使用带拦截器的按键绑定系统来处理键盘快捷键。复制功能通过以下方式实现：
+
+1. **Keybinding overrides** in `opencode.jsonc` modify default bindings
+2. **Environment variable** `OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT` enables the copy intercept
+3. **Priority intercept** runs before default keybindings to handle copy
+
+1. `opencode.jsonc` 中的**按键绑定覆盖**修改默认绑定
+2. **环境变量** `OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT` 启用复制拦截器
+3. **优先级拦截器**在默认按键绑定之前运行以处理复制
 
 ## Implementation Code / 实现代码
 
-### 1. Ctrl+C 复制处理器 / Ctrl+C Copy Handler
+### 1. Clipboard Service / 剪贴板服务
 
-```python
-# cli.py
-from prompt_toolkit.key_binding import KeyBindings
+```typescript
+// packages/tui/src/clipboard.ts
+import { execFile, spawn } from "node:child_process"
+import { readFile, rm } from "node:fs/promises"
+import { platform, release, tmpdir } from "node:os"
+import path from "node:path"
+import { promisify } from "node:util"
 
-kb = KeyBindings()
+const exec = promisify(execFile)
 
-@kb.add('c-c')
-def handle_ctrl_c(event):
-    """Ctrl+C = COPY (editor convention), not interrupt.
+function command(command: string, args: string[] = [], input?: string) {
+  return new Promise<Buffer>((resolve, reject) => {
+    const child = spawn(command, args, { 
+      stdio: [input === undefined ? "ignore" : "pipe", "pipe", "ignore"] 
+    })
+    const output: Buffer[] = []
+    child.on("error", reject)
+    child.stdout?.on("data", (chunk: Buffer) => output.push(chunk))
+    child.on("close", (code) => {
+      if (code === 0) return resolve(Buffer.concat(output))
+      reject(new Error(`${command} exited with code ${code}`))
+    })
+    if (input !== undefined) child.stdin?.end(input)
+  })
+}
 
-    Copy precedence so a copy never yields an empty clipboard:
-      1. Any prompt_toolkit selection in the input buffer.
-      2. System clipboard — the terminal emulator places arbitrary
-         region selections here when Control+C is pressed, so this
-         covers output-area selection (the common case: user selects
-         assistant output with the mouse and hits Control+C).
-      3. The whole input line (no selection, non-empty input).
-      4. The last assistant response — only as a last resort when
-         nothing is selected and the input is empty.
+function writeOsc52(text: string) {
+  if (!process.stdout.isTTY) return
+  const sequence = `\x1b]52;c;${Buffer.from(text).toString("base64")}\x07`
+  const passthrough = `\x1bPtmux;\x1b${sequence}\x1b\\`
+  process.stdout.write(process.env.TMUX ? sequence + passthrough : process.env.STY ? passthrough : sequence)
+}
 
-    Text is always pushed to the OS clipboard (pbcopy / xclip / xsel /
-    OSC 52), never just prompt_toolkit's internal clipboard. The agent
-    interrupt/cancel is on Ctrl+Q.
-    """
-    buf = event.app.current_buffer
-    sel_text = ""
-    try:
-        sel_text = buf.copy_selection() or ""
-    except Exception:
-        sel_text = ""
-    if sel_text:
-        text = sel_text
-        source = "selection"
-    else:
-        text = ""
-        source = ""
-        try:
-            if sys.platform == "darwin":
-                # The terminal emulator owns arbitrary-region selections in
-                # the output area; prompt_toolkit cannot read them. We copy
-                # the terminal's selection into the system clipboard so it
-                # lands in pbpaste. Two layers, in priority order:
-                #
-                #   1) iTerm2: read the visible selection directly via
-                #      AppleScript (no reliance on the frontmost app or the
-                #      system clipboard). Works even when the terminal is not
-                #      focused. Returns empty only when nothing is selected.
-                #   2) Shell out Cmd+C to the *terminal* process specifically
-                #      (not the frontmost app). A bare "keystroke c" from
-                #      System Events hits whatever window is focused, so when
-                #      another app is in front the copy silently fails and we
-                #      read an empty clipboard -> Ctrl+C yields NULL. Targeting
-                #      the terminal app by name (after activating it) makes the
-                #      copy deterministic.
-                tp = (os.environ.get("TERM_PROGRAM") or "").strip()
-                term_app = (
-                    "iTerm2" if tp in ("iTerm.app", "iTerm2")
-                    else "Terminal" if tp in ("Apple_Terminal", "Terminal")
-                    else None
-                )
-                # Layer 1: iTerm2 direct selection read (most reliable).
-                if term_app == "iTerm2":
-                    try:
-                        sel = subprocess.run(
-                            ["osascript", "-e",
-                             'tell application "iTerm2" to tell current '
-                             'window to tell current session to get '
-                             'selection text'],
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.DEVNULL,
-                            timeout=3, check=False,
-                        )
-                        if sel.returncode == 0 and sel.stdout:
-                            clip = sel.stdout.decode("utf-8", errors="replace").strip("\n")
-                            if clip:
-                                text = clip
-                                source = "clipboard"
-                    except Exception:
-                        pass
-                # Layer 2: Cmd+C into the terminal process, then read pbpaste.
-                if not text:
-                    if term_app:
-                        # Activate the terminal first so the keystroke lands
-                        # on the terminal's own selection, not a front app.
-                        script = (
-                            f'tell application "{term_app}" to activate\n'
-                            f'delay 0.05\n'
-                            f'tell application "System Events" to keystroke '
-                            f'"c" using command down'
-                        )
-                    else:
-                        # Unknown terminal: best-effort legacy behaviour.
-                        script = (
-                            'tell application "System Events" to keystroke '
-                            '"c" using command down'
-                        )
-                    try:
-                        subprocess.run(
-                            ["osascript", "-e", script],
-                            timeout=3, check=False,
-                        )
-                        # Give the clipboard a moment to settle.
-                        import time
-                        time.sleep(0.05)
-                        pb = subprocess.run(
-                            ["pbpaste"], stdout=subprocess.PIPE,
-                            stderr=subprocess.DEVNULL, timeout=2, check=False,
-                        )
-                        if pb.returncode == 0 and pb.stdout:
-                            clip = pb.stdout.decode("utf-8", errors="replace")
-                            if clip:
-                                text = clip
-                                source = "clipboard"
-                    except Exception:
-                        pass
-            elif sys.platform.startswith("linux"):
-                for cmd in (
-                    ["xclip", "-selection", "clipboard", "-o"],
-                    ["xsel", "--clipboard", "--output"],
-                ):
-                    try:
-                        p = subprocess.run(
-                            cmd, capture_output=True, timeout=2, check=False
-                        )
-                        if p.returncode == 0 and p.stdout:
-                            clip = p.stdout.decode("utf-8", errors="replace")
-                            if clip:
-                                text = clip
-                                source = "clipboard"
-                                break
-                    except Exception:
-                        continue
-        except Exception:
-            pass
+export async function read() {
+  if (platform() === "darwin") {
+    const file = path.join(tmpdir(), "opencode-clipboard.png")
+    try {
+      await exec("osascript", [
+        "-e",
+        'set imageData to the clipboard as "PNGf"',
+        "-e",
+        `set fileRef to open for access POSIX file "${file}" with write permission`,
+        "-e",
+        "set eof fileRef to 0",
+        "-e",
+        "write imageData to fileRef",
+        "-e",
+        "close access fileRef",
+      ])
+      return { data: (await readFile(file)).toString("base64"), mime: "image/png" }
+    } catch {
+      // Fall through to text clipboard.
+    } finally {
+      await rm(file, { force: true }).catch(() => {})
+    }
+  }
 
-    if not text:
-        # Nothing to copy — just clear selection and return.
-        try:
-            event.app.current_buffer.selection = None
-        except Exception:
-            pass
-        return
-
-    # Push to OS clipboard.
-    try:
-        if sys.platform == "darwin":
-            subprocess.run(
-                ["pbcopy"], input=text.encode("utf-8"), timeout=2, check=False
-            )
-        elif sys.platform.startswith("linux"):
-            for cmd in (
-                ["xclip", "-selection", "clipboard"],
-                ["xsel", "--clipboard", "--input"],
-            ):
-                try:
-                    subprocess.run(
-                        cmd, input=text.encode("utf-8"), timeout=2, check=False
-                    )
-                    break
-                except Exception:
-                    continue
-        # Also try OSC 52 for terminal emulators that support it.
-        import base64
-        b64 = base64.b64encode(text.encode("utf-8")).decode("ascii")
-        osc = f"\x1b]52;c;{b64}\x07"
-        sys.stdout.write(osc)
-        sys.stdout.flush()
-    except Exception:
-        pass
-
-    # Show toast notification.
-    try:
-        from rich.console import Console
-        console = Console()
-        console.print(f"[dim]Copied {len(text)} characters to clipboard[/dim]")
-    except Exception:
-        pass
-
-    # Clear selection.
-    try:
-        event.app.current_buffer.selection = None
-    except Exception:
-        pass
-```
-
-### 2. Ctrl+Q 中断处理器 / Ctrl+Q Interrupt Handler
-
-```python
-# cli.py
-@kb.add('c-q')  # Ctrl+Q
-def handle_ctrl_q(event):
-    """Alternative interrupt/exit shortcut (Ctrl+Q).
-
-    Behaves like Ctrl+C: cancels active prompts, interrupts the
-    running agent, or clears the input buffer. Does not support
-    the double-press 'force exit' feature of Ctrl+C.
-    """
-    # Cancel active voice recording.
-    _should_cancel_voice = False
-    _recorder_ref = None
-    with cli_ref._voice_lock:
-        if cli_ref._voice_recording and cli_ref._voice_recorder:
-            _recorder_ref = cli_ref._voice_recorder
-            cli_ref._voice_recording = False
-            cli_ref._voice_continuous = False
-            _should_cancel_voice = True
-    if _should_cancel_voice:
-        _cprint(f"\n{_DIM}Recording cancelled.{_RST}")
-        threading.Thread(
-            target=_recorder_ref.cancel, daemon=True
-        ).start()
-        event.app.invalidate()
-        return
-
-    # Cancel slash confirmation prompt (foreground UI — cancel and stop).
-    if self._slash_confirm_state:
-        self._submit_slash_confirm_response("cancel")
-        event.app.current_buffer.reset()
-        event.app.invalidate()
-        return
-
-    # Cancel /model picker (foreground UI — cancel and stop).
-    if self._model_picker_state:
-        self._close_model_picker()
-        event.app.current_buffer.reset()
-        event.app.invalidate()
-        return
-
-    # Clear all agent-blocking overlays in one shot, then fall through to
-    # the agent-interrupt branch so a single Ctrl+Q both clears a stale
-    # overlay and interrupts a still-running agent (#14026).
-    _overlay_cleared = bool(
-        self._sudo_state
-        or self._secret_state
-        or self._approval_state
-        or self._clarify_state
+  if (platform() === "win32" || release().includes("WSL")) {
+    const script =
+      "Add-Type -AssemblyName System.Windows.Forms; $img = [System.Windows.Forms.Clipboard]::GetImage(); if ($img) { $ms = New-Object System.IO.MemoryStream; $img.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png); [System.Convert]::ToBase64String($ms.ToArray()) }"
+    const image = await command("powershell.exe", ["-NonInteractive", "-NoProfile", "-command", script]).catch(() =>
+      Buffer.alloc(0),
     )
-    if _overlay_cleared:
-        self._clear_active_overlays_for_interrupt()
-        event.app.current_buffer.reset()
-        event.app.invalidate()
+    if (image.length) return { data: image.toString().trim(), mime: "image/png" }
+  }
 
-    if _overlay_cleared and not (self._agent_running and self.agent):
-        return
+  if (platform() === "linux") {
+    const wayland = await command("wl-paste", ["-t", "image/png"]).catch(() => Buffer.alloc(0))
+    if (wayland.length) return { data: wayland.toString("base64"), mime: "image/png" }
+    const x11 = await command("xclip", ["-selection", "clipboard", "-t", "image/png", "-o"]).catch(() =>
+      Buffer.alloc(0),
+    )
+    if (x11.length) return { data: x11.toString("base64"), mime: "image/png" }
+  }
 
-    if self._agent_running and self.agent:
-        print("\n⚡ Interrupting agent...")
-        request_hard_interrupt(self.agent)
-    elif event.app.current_buffer.text or self._attached_images:
-        event.app.current_buffer.reset()
-        self._attached_images.clear()
-        event.app.invalidate()
-    else:
-        # Ctrl+Q no longer exits on idle — it only interrupts/cancels.
-        # Use /quit or Ctrl+C for exit.
-        return
+  const { default: clipboardy } = await import("clipboardy")
+  const text = await clipboardy.read().catch(() => undefined)
+  if (text) return { data: text, mime: "text/plain" }
+}
+
+export function copyCommand(
+  os: NodeJS.Platform,
+  wayland: boolean,
+  has: (name: string) => boolean,
+): string[] | undefined {
+  if (os === "darwin" && has("osascript")) return ["osascript"]
+  if (os === "linux" && wayland && has("wl-copy")) return ["wl-copy"]
+  if (os === "linux" && has("xclip")) return ["xclip", "-selection", "clipboard"]
+  if (os === "linux" && has("xsel")) return ["xsel", "--clipboard", "--input"]
+  if (os === "win32" && has("powershell.exe")) {
+    return [
+      "powershell.exe",
+      "-NonInteractive",
+      "-NoProfile",
+      "-Command",
+      "[Console]::InputEncoding = [System.Text.Encoding]::UTF8; Set-Clipboard -Value ([Console]::In.ReadToEnd())",
+    ]
+  }
+}
+
+let copyMethod: Promise<(text: string) => Promise<void>> | undefined
+
+function getCopyMethod() {
+  return (copyMethod ??= (async () => {
+    const { which } = await import("@opencode-ai/core/util/which")
+    const native = copyCommand(platform(), Boolean(process.env.WAYLAND_DISPLAY), (name) => Boolean(which(name)))
+    if (native?.[0] === "osascript") {
+      return async (text: string) => {
+        const escaped = text.replace(/\\/g, "\\\\").replace(/"/g, '\\"')
+        await command("osascript", ["-e", `set the clipboard to "${escaped}"`]).catch(() => undefined)
+      }
+    }
+    if (native) {
+      return async (text: string) => {
+        await command(native[0], native.slice(1), text).catch(() => undefined)
+      }
+    }
+    return async (text: string) => {
+      const { default: clipboardy } = await import("clipboardy")
+      await clipboardy.write(text).catch(() => undefined)
+    }
+  })())
+}
+
+export async function write(text: string) {
+  writeOsc52(text)
+  const method = await getCopyMethod()
+  await method(text)
+}
 ```
 
-### 3. Ctrl+V 粘贴处理器 / Ctrl+V Paste Handler
+### 2. Selection Handler / 选择处理器
 
-```python
-# cli.py
-@kb.add('c-v')  # Ctrl+V
-def handle_ctrl_v(event):
-    """Ctrl+V = PASTE from system clipboard."""
-    buf = event.app.current_buffer
-    text = None
-    copied = False
-    try:
-        if sys.platform == "darwin":
-            p = subprocess.run(
-                ["pbpaste"], capture_output=True, timeout=2, check=False
-            )
-            if p.returncode == 0:
-                text = p.stdout.decode("utf-8", errors="replace")
-                copied = True
-        elif sys.platform.startswith("linux"):
-            for cmd in (
-                ["xclip", "-selection", "clipboard", "-o"],
-                ["xsel", "--clipboard", "--output"],
-            ):
-                try:
-                    p = subprocess.run(
-                        cmd, capture_output=True, timeout=2, check=False
-                    )
-                    if p.returncode == 0 and p.stdout:
-                        text = p.stdout.decode("utf-8", errors="replace")
-                        copied = True
-                        break
-                except Exception:
-                    continue
-    except Exception:
-        pass
+```typescript
+// packages/tui/src/util/selection.ts
+import type { ClipboardService } from "../context/clipboard"
 
-    if text:
-        buf.insert_text(text)
+type Toast = {
+  show: (input: { message: string; variant: "info" | "success" | "warning" | "error" }) => void
+  error: (err: unknown) => void
+}
+
+type FocusableSelectionTarget = {
+  hasSelection: () => boolean
+  getClipboardText?: (text: string) => string
+}
+
+type Renderer = {
+  getSelection: () => { getSelectedText: () => string; selectedRenderables: FocusableSelectionTarget[] } | null
+  clearSelection: () => void
+  currentFocusedRenderable?: FocusableSelectionTarget | null
+}
+
+type SelectionKeyEvent = {
+  ctrl?: boolean
+  name: string
+  preventDefault: () => void
+  stopPropagation: () => void
+}
+
+export function copy(renderer: Renderer, toast: Toast, clipboard: ClipboardService): boolean {
+  const selection = renderer.getSelection()
+  if (!selection) return false
+
+  const text = selection.getSelectedText()
+  if (!text) return false
+
+  const focus = renderer.currentFocusedRenderable
+  const clipboardText =
+    focus?.getClipboardText && selection.selectedRenderables.includes(focus) ? focus.getClipboardText(text) : text
+
+  clipboard
+    ?.write?.(clipboardText)
+    .then(() => toast.show({ message: "Copied to clipboard", variant: "info" }))
+    .catch(toast.error)
+
+  renderer.clearSelection()
+  return true
+}
+
+export function handleSelectionKey(
+  renderer: Renderer,
+  toast: Toast,
+  event: SelectionKeyEvent,
+  clipboard: ClipboardService,
+) {
+  const selection = renderer.getSelection()
+  if (!selection) return
+
+  if (event.ctrl && event.name === "c") {
+    if (!copy(renderer, toast, clipboard)) {
+      renderer.clearSelection()
+      return
+    }
+
+    event.preventDefault()
+    event.stopPropagation()
+    return
+  }
+
+  if (event.name === "escape") {
+    renderer.clearSelection()
+    event.preventDefault()
+    event.stopPropagation()
+    return
+  }
+
+  const focus = renderer.currentFocusedRenderable
+  if (focus?.hasSelection() && selection.selectedRenderables.includes(focus)) return
+
+  renderer.clearSelection()
+}
+
+export * as Selection from "./selection"
 ```
 
-### 4. 配置选项 / Configuration Options
+### 3. Keybinding Configuration / 按键绑定配置
 
-```python
-# hermes_cli/config_defaults.py
-"copy_shortcut": "auto",  # "auto" (platform default) | "ctrl_c" | "ctrl_shift_c" | "disabled"
+```typescript
+// packages/tui/src/config/keybind.ts
+export const Definitions = {
+  // ... other keybindings ...
+  
+  app_exit: keybind("ctrl+d,<leader>q", "Exit the application"),
+  input_clear: keybind("none", "Clear input field"),
+  input_paste: keybind({ key: "ctrl+v", preventDefault: false }, "Paste from clipboard"),
+  
+  // ... other keybindings ...
+}
+```
+
+### 4. Application Integration / 应用集成
+
+```typescript
+// packages/tui/src/app.tsx
+// Let selection copy/dismiss win ahead of normal bindings when explicit copy is required.
+const offSelectionKeys = keymap.intercept(
+  "key",
+  ({ event }) => {
+    if (!Flag.OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT) return
+    Selection.handleSelectionKey(renderer, toast, event, clipboard)
+  },
+  { priority: 1 },
+)
+onCleanup(() => {
+  offSelectionKeys()
+  attention.dispose()
+})
+
+// Wire up console copy-to-clipboard via opentui's onCopySelection callback
+renderer.console.onCopySelection = async (text: string) => {
+  if (!text || text.length === 0) return
+
+  await clipboard
+    .write?.(text)
+    .then(() => toast.show({ message: "Copied to clipboard", variant: "info" }))
+    .catch(toast.error)
+
+  renderer.clearSelection()
+}
 ```
 
 ## Configuration / 配置
 
-### config.yaml / 配置文件
-
-```yaml
-display:
-  copy_shortcut: "ctrl_c"  # 或 "ctrl_shift_c" 或 "disabled"
-```
-
-### 环境变量 / Environment Variables
+### Environment Variables / 环境变量
 
 ```bash
-# 不需要额外环境变量，Hermes 默认支持
-# No additional environment variables needed, Hermes supports this by default
+# Enable copy intercept on macOS/Linux / 在 macOS/Linux 上启用复制拦截
+export OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT=1
+```
+
+### Config File / 配置文件
+
+`~/.config/opencode/opencode.jsonc`:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "keybinds": {
+    "app_exit": "ctrl+d,<leader>q",
+    "input_clear": "none",
+    "input_paste": "ctrl+v"
+  }
+}
 ```
 
 ## Platform Support / 平台支持
@@ -346,20 +319,24 @@ display:
 
 ## How It Works / 工作原理
 
-1. **按键绑定注册**: 使用 `@kb.add('c-c')` 装饰器注册 Ctrl+C 处理器
-2. **优先级复制**: 按优先级复制文本（选择 > 剪贴板 > 输入行 > 最后回复）
-3. **系统剪贴板**: 使用 `pbcopy`/`xclip`/`xsel` 写入系统剪贴板
-4. **OSC 52 支持**: 同时发送 OSC 52 转义序列以支持终端模拟器
-5. **中断分离**: Ctrl+Q 专门用于中断，Ctrl+C 专门用于复制
+1. **Keybinding Override**: The `app_exit` binding is changed from `ctrl+c,ctrl+d,<leader>q` to `ctrl+d,<leader>q`, removing `ctrl+c` from the exit binding.
 
-1. **Keybinding Registration**: Use `@kb.add('c-c')` decorator to register Ctrl+C handler
-2. **Priority Copy**: Copy text by priority (selection > clipboard > input line > last response)
-3. **System Clipboard**: Use `pbcopy`/`xclip`/`xsel` to write to system clipboard
-4. **OSC 52 Support**: Also send OSC 52 escape sequence for terminal emulator support
-5. **Interrupt Separation**: Ctrl+Q is dedicated to interrupt, Ctrl+C is dedicated to copy
+2. **Input Clear Disabled**: The `input_clear` binding is set to `none`, removing the `ctrl+c` binding that was clearing the input field.
+
+3. **Copy Intercept**: The `OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT` environment variable enables an intercept that runs before default keybindings. When `ctrl+c` is pressed and text is selected, the intercept copies the text to clipboard.
+
+4. **Clipboard Service**: The clipboard service handles platform-specific copy/paste operations using system commands.
+
+1. **按键绑定覆盖**：将 `app_exit` 绑定从 `ctrl+c,ctrl+d,<leader>q` 改为 `ctrl+d,<leader>q`，从退出绑定中移除 `ctrl+c`。
+
+2. **禁用输入清除**：将 `input_clear` 绑定设置为 `none`，移除清除输入字段的 `ctrl+c` 绑定。
+
+3. **复制拦截器**：`OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT` 环境变量启用一个在默认按键绑定之前运行的拦截器。当按下 `ctrl+c` 且有选中文本时，拦截器会将文本复制到剪贴板。
+
+4. **剪贴板服务**：剪贴板服务使用系统命令处理特定平台的复制/粘贴操作。
 
 ## References / 参考
 
-- [Hermes Agent GitHub Repository](https://github.com/NousResearch/hermes-agent)
-- [prompt_toolkit Documentation](https://python-prompt-toolkit.readthedocs.io/)
-- [OSC 52 Clipboard Sequence](https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h2-Operating-System-Commands)
+- [opencode GitHub Repository](https://github.com/anomalyco/opencode)
+- [Hermes Agent Keybindings](https://github.com/NousResearch/hermes-agent)
+- [OpenTUI Keymap Documentation](https://github.com/anomalyco/opencode/tree/dev/packages/tui)
