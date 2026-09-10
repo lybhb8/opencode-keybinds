@@ -337,6 +337,44 @@ def handle_ctrl_v(event):
     # 从系统剪贴板粘贴
 ```
 
+## Hermes Implementation / Hermes 实现
+
+This skill is based on the keybinding implementation in Hermes Agent. For detailed implementation code, see [hermes-implementation.md](hermes-implementation.md).
+
+此技能基于 Hermes Agent 中的按键绑定实现。详细的实现代码请参阅 [hermes-implementation.md](hermes-implementation.md)。
+
+### Key Differences / 主要区别
+
+| Feature / 功能 | Hermes / Hermes | opencode / opencode |
+|----------------|----------------|---------------------|
+| Framework / 框架 | prompt_toolkit | OpenTUI |
+| Ctrl+C / Ctrl+C | Copy / 复制 | Copy / 复制（需要配置） |
+| Ctrl+V / Ctrl+V | Paste / 粘贴 | Paste / 粘贴 |
+| Interrupt / 中断 | Ctrl+Q | Ctrl+D |
+| Configuration / 配置 | config.yaml | opencode.jsonc + 环境变量 |
+
+### Hermes Keybindings / Hermes 按键绑定
+
+```python
+# Ctrl+C = Copy (not interrupt)
+@kb.add('c-c')
+def handle_ctrl_c(event):
+    # Copy selected text to clipboard
+    # 复制选中文本到剪贴板
+
+# Ctrl+Q = Interrupt (not exit)
+@kb.add('c-q')
+def handle_ctrl_q(event):
+    # Interrupt running agent
+    # 中断运行中的 agent
+
+# Ctrl+V = Paste
+@kb.add('c-v')
+def handle_ctrl_v(event):
+    # Paste from system clipboard
+    # 从系统剪贴板粘贴
+```
+
 ## How It Works / 工作原理
 
 opencode uses a keybinding system with intercepts:
