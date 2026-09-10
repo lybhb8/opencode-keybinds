@@ -71,8 +71,6 @@ git clone https://github.com/lybhb8/opencode-keybinds.git
 @opencode-keybinds
 ```
 
-或按照上述手动配置步骤操作。
-
 ## 工作原理
 
 opencode 使用带拦截器的按键绑定系统：
@@ -85,18 +83,6 @@ opencode 使用带拦截器的按键绑定系统：
 - macOS：`pbcopy` 命令或 OSC 52 转义序列
 - Linux：`xclip`、`xsel` 或 `wl-copy`
 - Windows：PowerShell 或 OSC 52
-
-## 与 Hermes 的比较
-
-本技能参考了 Hermes Agent 的按键绑定实现。详细实现代码请参阅 [hermes-implementation.md](hermes-implementation.md)。
-
-| 功能 | Hermes | opencode |
-|------|--------|----------|
-| 框架 | prompt_toolkit | OpenTUI |
-| Ctrl+C | 复制 | 复制（需要配置） |
-| Ctrl+V | 粘贴 | 粘贴 |
-| 中断 | Ctrl+Q | Ctrl+D |
-| 配置 | config.yaml | opencode.jsonc + 环境变量 |
 
 ## 故障排除
 

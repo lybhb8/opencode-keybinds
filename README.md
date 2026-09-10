@@ -71,8 +71,6 @@ Load this skill in opencode by referencing it:
 @opencode-keybinds
 ```
 
-Or follow the manual configuration steps above.
-
 ## How It Works
 
 opencode uses a keybinding system with intercepts:
@@ -85,18 +83,6 @@ The copy functionality uses:
 - macOS: `pbcopy` command or OSC 52 escape sequence
 - Linux: `xclip`, `xsel`, or `wl-copy`
 - Windows: PowerShell or OSC 52
-
-## Hermes Comparison
-
-This skill is inspired by the keybinding implementation in Hermes Agent. For detailed implementation code, see [hermes-implementation.md](hermes-implementation.md).
-
-| Feature | Hermes | opencode |
-|---------|--------|----------|
-| Framework | prompt_toolkit | OpenTUI |
-| Ctrl+C | Copy | Copy (requires config) |
-| Ctrl+V | Paste | Paste |
-| Interrupt | Ctrl+Q | Ctrl+D |
-| Config | config.yaml | opencode.jsonc + env var |
 
 ## Troubleshooting
 

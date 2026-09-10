@@ -5,10 +5,6 @@ version: 1.0.0
 author: opencode user
 license: MIT
 platforms: [macos, linux]
-metadata:
-  hermes:
-    tags: [keybinds, clipboard, productivity]
-    category: configuration
 ---
 
 # OpenCode Keybindings
@@ -17,7 +13,6 @@ Enable Ctrl+C for copy and Ctrl+V for paste in opencode TUI on macOS/Linux. Wind
 
 ## When to Use
 
-Use this skill when you want to:
 - Enable Ctrl+C to copy selected text instead of exiting (macOS/Linux only)
 - Enable Ctrl+V to paste from clipboard
 - Customize opencode keybindings for better productivity
@@ -26,8 +21,8 @@ Use this skill when you want to:
 
 - opencode installed (version 1.0.0 or later)
 - Terminal emulator with clipboard support (iTerm2, Terminal.app, etc.)
-- For macOS: `pbcopy` and `pbpaste` commands (built-in)
-- For Linux: `xclip`, `xsel`, or `wl-copy` installed
+- macOS: `pbcopy` and `pbpaste` (built-in)
+- Linux: `xclip`, `xsel`, or `wl-copy`
 
 ## Configuration
 
@@ -98,18 +93,6 @@ The copy functionality uses:
 - macOS: `pbcopy` command or OSC 52 escape sequence
 - Linux: `xclip`, `xsel`, or `wl-copy`
 - Windows: PowerShell or OSC 52
-
-## Hermes Comparison
-
-This skill is inspired by the keybinding implementation in Hermes Agent. For detailed implementation code, see [hermes-implementation.md](hermes-implementation.md).
-
-| Feature | Hermes | opencode |
-|---------|--------|----------|
-| Framework | prompt_toolkit | OpenTUI |
-| Ctrl+C | Copy | Copy (requires config) |
-| Ctrl+V | Paste | Paste |
-| Interrupt | Ctrl+Q | Ctrl+D |
-| Config | config.yaml | opencode.jsonc + env var |
 
 ## Verification
 
