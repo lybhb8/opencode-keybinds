@@ -1,5 +1,7 @@
 # OpenCode & Hermes Keybindings
 
+[English](README.md) | [中文](README.zh.md)
+
 Enable Ctrl+C for copy and Ctrl+V for paste in opencode TUI on macOS/Linux. Windows already supports this by default.
 
 Inspired by Hermes Agent keybinding implementation. For Hermes source code details, see [HERMES.md](HERMES.md).

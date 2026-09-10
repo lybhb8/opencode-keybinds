@@ -1,5 +1,7 @@
 # OpenCode 与 Hermes 按键绑定
 
+[English](README.md) | [中文](README.zh.md)
+
 在 macOS/Linux 上启用 opencode TUI 中 Ctrl+C 复制和 Ctrl+V 粘贴功能。Windows 默认已支持。
 
 参考 Hermes Agent 按键绑定实现。Hermes 源码详情请参阅 [HERMES.md](HERMES.md)。
