@@ -1,4 +1,4 @@
-# OpenCode 与 Hermes 按键绑定
+# Mac 终端 Control + C  按键绑定
 
 [English](README.md) | [中文](README.zh.md)
 
