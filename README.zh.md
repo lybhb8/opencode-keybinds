@@ -4,8 +4,6 @@
 
 在 macOS/Linux 上启用 opencode TUI 中 Ctrl+C 复制和 Ctrl+V 粘贴功能。Windows 默认已支持。
 
-参考 Hermes Agent 按键绑定实现。Hermes 源码详情请参阅 [HERMES.md](HERMES.md)。
-
 ---
 
 ## 第一部分：OpenCode
@@ -64,7 +62,7 @@ cp SKILL.md ~/.opencode/skills/opencode-keybinds/
 
 # 或 Git 克隆
 cd ~/.opencode/skills
-git clone https://github.com/lybhb8/opencode-keybinds.git
+git clone https://github.com/lybhb8/mac-ctrl-c.git
 ```
 
 ### 使用方法
@@ -131,7 +129,7 @@ Hermes Agent 使用 Python 的 `prompt_toolkit` 库管理按键绑定。实现�
 
 ```yaml
 # ~/.hermes/config.yaml
-keybinds:
+keybindings:
   copy: ctrl+c
   paste: ctrl+v
   interrupt: ctrl+q
@@ -139,8 +137,9 @@ keybinds:
 
 ### 实现代码
 
+#### Ctrl+C = 复制
+
 ```python
-# Ctrl+C = 复制
 @kb.add('c-c')
 def handle_ctrl_c(event):
     """复制选中文本到剪贴板。"""
@@ -150,16 +149,22 @@ def handle_ctrl_c(event):
         clipboard = ClipboardService()
         clipboard.write(focused.selected_text)
         focused.clear_selection()
+```
 
-# Ctrl+Q = 中断
+#### Ctrl+Q = 中断
+
+```python
 @kb.add('c-q')
 def handle_ctrl_q(event):
     """中断运行中的 agent。"""
     app = event.app
     if app.is_running:
         app.interrupt()
+```
 
-# Ctrl+V = 粘贴
+#### Ctrl+V = 粘贴
+
+```python
 @kb.add('c-v')
 def handle_ctrl_v(event):
     """从系统剪贴板粘贴。"""
@@ -171,7 +176,57 @@ def handle_ctrl_v(event):
         focused.insert_text(text)
 ```
 
-完整实现详情请参阅 [HERMES.md](HERMES.md)。
+### 剪贴板服务（Hermes）
+
+```python
+import subprocess
+import platform
+
+class ClipboardService:
+    def write(self, text: str):
+        """复制文本到系统剪贴板。"""
+        system = platform.system()
+        if system == "Darwin":  # macOS
+            process = subprocess.Popen(['pbcopy'], stdin=subprocess.PIPE)
+            process.communicate(text.encode('utf-8'))
+        elif system == "Linux":
+            try:
+                process = subprocess.Popen(['xclip', '-selection', 'clipboard'], stdin=subprocess.PIPE)
+                process.communicate(text.encode('utf-8'))
+            except FileNotFoundError:
+                process = subprocess.Popen(['xsel', '--clipboard', '--input'], stdin=subprocess.PIPE)
+                process.communicate(text.encode('utf-8'))
+        elif system == "Windows":
+            command = f'echo {text} | clip'
+            subprocess.run(command, shell=True)
+
+    def read(self) -> str:
+        """从系统剪贴板读取文本。"""
+        system = platform.system()
+        if system == "Darwin":  # macOS
+            return subprocess.check_output(['pbpaste']).decode('utf-8')
+        elif system == "Linux":
+            try:
+                return subprocess.check_output(['xclip', '-selection', 'clipboard', '-o']).decode('utf-8')
+            except FileNotFoundError:
+                return subprocess.check_output(['xsel', '--clipboard', '--output']).decode('utf-8')
+        elif system == "Windows":
+            return subprocess.check_output(['powershell', '-command', 'Get-Clipboard']).decode('utf-8')
+        return ""
+```
+
+### 源码位置
+
+Hermes 按键绑定实现位于：
+- `/Users/mac/.hermes/hermes-agent/cli.py`
+- 第 17707-17800 行（ctrl+c 复制）
+- 第 18729-18795 行（ctrl+q 中断）
+- 第 18797+ 行（ctrl+v 粘贴）
+
+### 参考
+
+- [Hermes Agent GitHub](https://github.com/NousResearch/hermes-agent)
+- [prompt_toolkit 文档](https://python-prompt-toolkit.readthedocs.io/)
 
 ---
 

@@ -4,8 +4,6 @@
 
 Enable Ctrl+C for copy and Ctrl+V for paste in opencode TUI on macOS/Linux. Windows already supports this by default.
 
-Inspired by Hermes Agent keybinding implementation. For Hermes source code details, see [HERMES.md](HERMES.md).
-
 ---
 
 ## Part 1: OpenCode
@@ -64,7 +62,7 @@ cp SKILL.md ~/.opencode/skills/opencode-keybinds/
 
 # Or git clone
 cd ~/.opencode/skills
-git clone https://github.com/lybhb8/opencode-keybinds.git
+git clone https://github.com/lybhb8/mac-ctrl-c.git
 ```
 
 ### Usage
@@ -139,8 +137,9 @@ keybindings:
 
 ### Implementation Code
 
+#### Ctrl+C = Copy
+
 ```python
-# Ctrl+C = Copy
 @kb.add('c-c')
 def handle_ctrl_c(event):
     """Copy selected text to clipboard."""
@@ -150,16 +149,22 @@ def handle_ctrl_c(event):
         clipboard = ClipboardService()
         clipboard.write(focused.selected_text)
         focused.clear_selection()
+```
 
-# Ctrl+Q = Interrupt
+#### Ctrl+Q = Interrupt
+
+```python
 @kb.add('c-q')
 def handle_ctrl_q(event):
     """Interrupt running agent."""
     app = event.app
     if app.is_running:
         app.interrupt()
+```
 
-# Ctrl+V = Paste
+#### Ctrl+V = Paste
+
+```python
 @kb.add('c-v')
 def handle_ctrl_v(event):
     """Paste from system clipboard."""
@@ -171,7 +176,57 @@ def handle_ctrl_v(event):
         focused.insert_text(text)
 ```
 
-For full implementation details, see [HERMES.md](HERMES.md).
+### Clipboard Service (Hermes)
+
+```python
+import subprocess
+import platform
+
+class ClipboardService:
+    def write(self, text: str):
+        """Copy text to system clipboard."""
+        system = platform.system()
+        if system == "Darwin":  # macOS
+            process = subprocess.Popen(['pbcopy'], stdin=subprocess.PIPE)
+            process.communicate(text.encode('utf-8'))
+        elif system == "Linux":
+            try:
+                process = subprocess.Popen(['xclip', '-selection', 'clipboard'], stdin=subprocess.PIPE)
+                process.communicate(text.encode('utf-8'))
+            except FileNotFoundError:
+                process = subprocess.Popen(['xsel', '--clipboard', '--input'], stdin=subprocess.PIPE)
+                process.communicate(text.encode('utf-8'))
+        elif system == "Windows":
+            command = f'echo {text} | clip'
+            subprocess.run(command, shell=True)
+
+    def read(self) -> str:
+        """Read text from system clipboard."""
+        system = platform.system()
+        if system == "Darwin":  # macOS
+            return subprocess.check_output(['pbpaste']).decode('utf-8')
+        elif system == "Linux":
+            try:
+                return subprocess.check_output(['xclip', '-selection', 'clipboard', '-o']).decode('utf-8')
+            except FileNotFoundError:
+                return subprocess.check_output(['xsel', '--clipboard', '--output']).decode('utf-8')
+        elif system == "Windows":
+            return subprocess.check_output(['powershell', '-command', 'Get-Clipboard']).decode('utf-8')
+        return ""
+```
+
+### Source Code Location
+
+The Hermes keybinding implementation is located at:
+- `/Users/mac/.hermes/hermes-agent/cli.py`
+- Lines 17707-17800 (ctrl+c copy)
+- Lines 18729-18795 (ctrl+q interrupt)
+- Lines 18797+ (ctrl+v paste)
+
+### References
+
+- [Hermes Agent GitHub](https://github.com/NousResearch/hermes-agent)
+- [prompt_toolkit Documentation](https://python-prompt-toolkit.readthedocs.io/)
 
 ---
 
