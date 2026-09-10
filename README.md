@@ -1,4 +1,4 @@
-# OpenCode & Hermes Keybindings
+#  "Control + C" Keybinings
 
 [English](README.md) | [中文](README.zh.md)
 
